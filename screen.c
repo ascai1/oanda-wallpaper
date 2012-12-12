@@ -9,6 +9,7 @@
 #include "poll_t.h"
 
 #define SHOW_TEXT
+#define FULLSCREEN
 #define FONT_USED "-misc-fixed-bold-r-normal--15-140-75-75-c-90-iso10646-1"
 
 #define T_BOUND 0.5
@@ -52,7 +53,7 @@ struct {
 	short font_width;
 	short font_height;
 	#endif
-} glxa;
+} gla;
 
 State state;
 State state_buffer;
@@ -166,34 +167,34 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 			T_BOUND, T_BOUND, T_BOTTOM_BRIGHTNESS, 0.0, 0.0, brightness
 		};
 
-		glBindBuffer(GL_ARRAY_BUFFER, glxa.array_buffer);
+		glBindBuffer(GL_ARRAY_BUFFER, gla.array_buffer);
 		if (is->direction == 'u') {
 			glBufferData(GL_ARRAY_BUFFER, sizeof(up), up, GL_STATIC_DRAW);
 		} else {
 			glBufferData(GL_ARRAY_BUFFER, sizeof(down), down, GL_STATIC_DRAW);
 		}
 
-		glEnableVertexAttribArray(glxa.position);
-		glVertexAttribPointer(glxa.position, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), 0);
+		glEnableVertexAttribArray(gla.position);
+		glVertexAttribPointer(gla.position, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), 0);
 
-		glEnableVertexAttribArray(glxa.color);
-		glVertexAttribPointer(glxa.color, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void *)(2 * sizeof(GLfloat)));
+		glEnableVertexAttribArray(gla.color);
+		glVertexAttribPointer(gla.color, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void *)(2 * sizeof(GLfloat)));
 
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
 #ifdef SHOW_TEXT
-		glListBase(glxa.font_base);
+		glListBase(gla.font_base);
 		glColor4f(1.0, 1.0, 1.0, brightness / 2 + 0.5);
 		float i_length = strlen(is->instrument);
-		GLfloat i_left = -i_length * glxa.font_width / width;
-		GLfloat i_bottom = 0.9 - glxa.font_height / height * 2;
+		GLfloat i_left = -i_length * gla.font_width / width;
+		GLfloat i_bottom = 0.9 - gla.font_height / height * 2;
 		glRasterPos2f(i_left, i_bottom);
 		glCallLists(i_length, GL_UNSIGNED_BYTE, (unsigned char *)is->instrument);
 
 		char price[16] = {0};
 		sprintf(price, "%f", is->price);
 		float p_length = strlen(price);
-		GLfloat p_left = -p_length * glxa.font_width / width;
+		GLfloat p_left = -p_length * gla.font_width / width;
 		GLfloat p_top = -0.9;
 		glRasterPos2f(p_left, p_top);
 		glCallLists(p_length, GL_UNSIGNED_BYTE, (unsigned char *)price);
@@ -209,23 +210,23 @@ void initGL(Display * dpy, Window win, GLuint pHandle, XWindowAttributes * xwa
 , XFontStruct * font
 #endif
 ) {
-	glxa.position = glGetAttribLocation(pHandle, "position");
-	glxa.color = glGetAttribLocation(pHandle, "color");
+	gla.position = glGetAttribLocation(pHandle, "position");
+	gla.color = glGetAttribLocation(pHandle, "color");
 
 #ifdef SHOW_TEXT
 	int first = font->min_char_or_byte2;
 	int last = font->max_char_or_byte2;
-	glxa.font_base = glGenLists(font->max_char_or_byte2 + 1);
-	glXUseXFont(font->fid, first, last - first + 1, glxa.font_base + first);
+	gla.font_base = glGenLists(font->max_char_or_byte2 + 1);
+	glXUseXFont(font->fid, first, last - first + 1, gla.font_base + first);
 
-	glxa.font_width = font->max_bounds.width;
-	glxa.font_height = font->max_bounds.ascent - font->max_bounds.descent;
+	gla.font_width = font->max_bounds.width;
+	gla.font_height = font->max_bounds.ascent - font->max_bounds.descent;
 #endif
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	XGetWindowAttributes(dpy, win, xwa);
-	glGenBuffers(1, &glxa.array_buffer);
+	glGenBuffers(1, &gla.array_buffer);
 }
 
 int init_window() {
@@ -253,22 +254,35 @@ int init_window() {
 	swa.colormap = XCreateColormap(wa.dpy, RootWindow(wa.dpy, vinfo->screen), vinfo->visual, AllocNone);
 	wa.cmap = swa.colormap;
 
+#ifdef FULLSCREEN
+	swa.override_redirect = 1;
+#endif
+
 	wa.w = XCreateWindow(wa.dpy,
 			DefaultRootWindow(wa.dpy),
 			0,
 			0,
-			DisplayWidth(wa.dpy, vinfo->screen)/2,
-			DisplayHeight(wa.dpy, vinfo->screen)/2,
+			DisplayWidth(wa.dpy, vinfo->screen),
+			DisplayHeight(wa.dpy, vinfo->screen),
 			0,
 			0,
 			CopyFromParent,
 			vinfo->visual,
+#ifdef FULLSCREEN
+			CWColormap | CWEventMask | CWOverrideRedirect,
+#else
 			CWColormap | CWEventMask,
+#endif
 			&swa);
 	if (!wa.w) {
 		printf("Unable to create window\n");
 		return 1;
 	}
+
+#ifdef FULLSCREEN
+	XGrabKeyboard(wa.dpy, wa.w, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+	XGrabPointer(wa.dpy, wa.w, True, PointerMotionMask, GrabModeAsync, GrabModeAsync, wa.w, None, CurrentTime);
+#endif
 
 	wa.glx_context = glXCreateContext(wa.dpy, vinfo, NULL, True);
 	XFree(vinfo);
