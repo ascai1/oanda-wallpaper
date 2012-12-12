@@ -8,9 +8,11 @@
 #include <math.h>
 #include "poll_t.h"
 
+#define SHOW_TEXT
+#define FONT_USED "-misc-fixed-bold-r-normal--15-140-75-75-c-90-iso10646-1"
+
 #define T_BOUND 0.5
 #define T_BOTTOM_BRIGHTNESS 0.3
-#define T_BORDER 2
 
 static GLchar * vShader = "#version 120\n"
 "attribute vec2 position;"
@@ -30,12 +32,27 @@ static GLchar * fShader = "#version 120\n"
 "}\0";
 
 struct {
+	Display * dpy;
+	Window w;
+	GLXContext glx_context;
 	XWindowAttributes xwa;
+	GLuint vHandle, fHandle, pHandle;
+	Colormap cmap;
+#ifdef SHOW_TEXT
+	XFontStruct * font;
+#endif
+} wa;
+
+struct {
 	GLuint array_buffer;
 	GLint position;
 	GLint color;
+	#ifdef SHOW_TEXT
 	GLint font_base;
-} attributes;
+	short font_width;
+	short font_height;
+	#endif
+} glxa;
 
 State state;
 State state_buffer;
@@ -90,21 +107,6 @@ GLuint createProgram(GLuint vShader, GLuint fShader) {
 	return 0;
 }
 
-void initGL(Display * dpy, Window win, GLuint pHandle, XFontStruct * font) {
-	attributes.position = glGetAttribLocation(pHandle, "position");
-	attributes.color = glGetAttribLocation(pHandle, "color");
-
-	int first = font->min_char_or_byte2;
-	int last = font->max_char_or_byte2;
-	attributes.font_base = glGenLists(font->max_char_or_byte2 + 1);
-	glXUseXFont(font->fid, first, last - first + 1, attributes.font_base + first);
-
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	XGetWindowAttributes(dpy, win, &attributes.xwa);
-	glGenBuffers(1, &attributes.array_buffer);
-}
-
 typedef struct {
 	int x, y;
 } Dimension;
@@ -130,31 +132,28 @@ Dimension get_width_for_num_instruments(int num_instruments, int width, int heig
 	return d;
 }
 
-void draw(Display * dpy, Window win) {
+//----------------------------DRAW---------------------------
+void draw(Display * dpy, Window win, int s_width, int s_height) {
 	refresh_state();
 
-	glViewport(0, 0, attributes.xwa.width, attributes.xwa.height);
-	glClearColor(1.0, 1.0, 1.0, 0.0);
-	glClear(GL_COLOR_BUFFER_BIT);
-
-	glViewport(0, 0, attributes.xwa.width - T_BORDER * 2, attributes.xwa.height - T_BORDER * 2);
+	glViewport(0, 0, s_width, s_height);
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	Dimension d = get_width_for_num_instruments(state.num_instruments, attributes.xwa.width, attributes.xwa.height);
+	Dimension d = get_width_for_num_instruments(state.num_instruments, s_width, s_height);
 	int i;
 	for (i = 0; i < state.num_instruments; ++i) {
-		float bottom = (attributes.xwa.width - T_BORDER * 2) / d.x * (i % d.x) + T_BORDER;
-		float left = (attributes.xwa.height - T_BORDER * 2) / d.y * (d.y - 1 - i / d.x) + T_BORDER;
-		float width = (attributes.xwa.width - T_BORDER * 2) / d.x;
-		float height = (attributes.xwa.height - T_BORDER * 2) / d.y;
+		float bottom = s_width / d.x * (i % d.x);
+		float left = s_height / d.y * (d.y - 1 - i / d.x);
+		float width = s_width / d.x;
+		float height = s_height / d.y;
 		glViewport(bottom, left, width, height);
 
 		Instrument_State * is = &state.instruments[i];
 
-		GLfloat brightness = pow(1 - pow((float)is->draw_state / MAX_DRAW_STATE * 2 - 1, 2), 0.25);
+		GLfloat brightness = pow(1 - pow((float)is->draw_state / MAX_DRAW_STATE * 2 - 1, 2), 0.5);
 		if (is->draw_state) --is->draw_state;
-		if (strcmp(is->instrument, "EUR_USD") == 0) printf("%d\n", is->draw_state);
+		//if (strcmp(is->instrument, "EUR_USD") == 0) printf("%d\n", is->draw_state);
 
 		GLfloat up[] = {
 			-T_BOUND, -T_BOUND, 0.0, T_BOTTOM_BRIGHTNESS, 0.0, brightness,
@@ -167,38 +166,166 @@ void draw(Display * dpy, Window win) {
 			T_BOUND, T_BOUND, T_BOTTOM_BRIGHTNESS, 0.0, 0.0, brightness
 		};
 
-		glBindBuffer(GL_ARRAY_BUFFER, attributes.array_buffer);
+		glBindBuffer(GL_ARRAY_BUFFER, glxa.array_buffer);
 		if (is->direction == 'u') {
 			glBufferData(GL_ARRAY_BUFFER, sizeof(up), up, GL_STATIC_DRAW);
 		} else {
 			glBufferData(GL_ARRAY_BUFFER, sizeof(down), down, GL_STATIC_DRAW);
 		}
 
-		glEnableVertexAttribArray(attributes.position);
-		glVertexAttribPointer(attributes.position, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), 0);
+		glEnableVertexAttribArray(glxa.position);
+		glVertexAttribPointer(glxa.position, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), 0);
 
-		glEnableVertexAttribArray(attributes.color);
-		glVertexAttribPointer(attributes.color, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void *)(2 * sizeof(GLfloat)));
+		glEnableVertexAttribArray(glxa.color);
+		glVertexAttribPointer(glxa.color, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void *)(2 * sizeof(GLfloat)));
 
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
-/*
-		glListBase(attributes.font_base);
-		glColor4f(1.0, 1.0, 1.0, brightness);
-		glRasterPos2f(-0.3, 0.8);
-		glCallLists(strlen(is->instrument), GL_UNSIGNED_BYTE, (unsigned char *)is->instrument);
+#ifdef SHOW_TEXT
+		glListBase(glxa.font_base);
+		glColor4f(1.0, 1.0, 1.0, brightness / 2 + 0.5);
+		float i_length = strlen(is->instrument);
+		GLfloat i_left = -i_length * glxa.font_width / width;
+		GLfloat i_bottom = 0.9 - glxa.font_height / height * 2;
+		glRasterPos2f(i_left, i_bottom);
+		glCallLists(i_length, GL_UNSIGNED_BYTE, (unsigned char *)is->instrument);
 
 		char price[16] = {0};
 		sprintf(price, "%f", is->price);
-		glRasterPos2f(-0.3, -1.0);
-		glCallLists(strlen(price), GL_UNSIGNED_BYTE, (unsigned char *)price);
-		*/
+		float p_length = strlen(price);
+		GLfloat p_left = -p_length * glxa.font_width / width;
+		GLfloat p_top = -0.9;
+		glRasterPos2f(p_left, p_top);
+		glCallLists(p_length, GL_UNSIGNED_BYTE, (unsigned char *)price);
+#endif
 	}
 
-	glFlush();
 	glXSwapBuffers(dpy, win);
 }
 
+//--------------------------INITIALIZATION------------------
+void initGL(Display * dpy, Window win, GLuint pHandle, XWindowAttributes * xwa
+#ifdef SHOW_TEXT
+, XFontStruct * font
+#endif
+) {
+	glxa.position = glGetAttribLocation(pHandle, "position");
+	glxa.color = glGetAttribLocation(pHandle, "color");
+
+#ifdef SHOW_TEXT
+	int first = font->min_char_or_byte2;
+	int last = font->max_char_or_byte2;
+	glxa.font_base = glGenLists(font->max_char_or_byte2 + 1);
+	glXUseXFont(font->fid, first, last - first + 1, glxa.font_base + first);
+
+	glxa.font_width = font->max_bounds.width;
+	glxa.font_height = font->max_bounds.ascent - font->max_bounds.descent;
+#endif
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	XGetWindowAttributes(dpy, win, xwa);
+	glGenBuffers(1, &glxa.array_buffer);
+}
+
+int init_window() {
+	wa.w = 0;
+	wa.glx_context = NULL;
+	wa.vHandle = wa.fHandle = wa.pHandle = 0;
+	wa.cmap = 0;
+#ifdef SHOW_TEXT
+	wa.font = NULL;
+#endif
+
+	wa.dpy = XOpenDisplay(NULL);
+	if (!wa.dpy) return 1;
+
+	int attrList[] = {GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 4, GLX_GREEN_SIZE, 4, GLX_BLUE_SIZE, 4, None};
+	XVisualInfo * vinfo = glXChooseVisual(wa.dpy, DefaultScreen(wa.dpy), attrList);
+	if (!vinfo) {
+		printf("Unable to acquire visual\n");
+		wa.dpy = NULL;
+		return 1;
+	}
+
+	XSetWindowAttributes swa;
+	swa.event_mask = ButtonPressMask | KeyPressMask | PointerMotionMask | StructureNotifyMask;
+	swa.colormap = XCreateColormap(wa.dpy, RootWindow(wa.dpy, vinfo->screen), vinfo->visual, AllocNone);
+	wa.cmap = swa.colormap;
+
+	wa.w = XCreateWindow(wa.dpy,
+			DefaultRootWindow(wa.dpy),
+			0,
+			0,
+			DisplayWidth(wa.dpy, vinfo->screen)/2,
+			DisplayHeight(wa.dpy, vinfo->screen)/2,
+			0,
+			0,
+			CopyFromParent,
+			vinfo->visual,
+			CWColormap | CWEventMask,
+			&swa);
+	if (!wa.w) {
+		printf("Unable to create window\n");
+		return 1;
+	}
+
+	wa.glx_context = glXCreateContext(wa.dpy, vinfo, NULL, True);
+	XFree(vinfo);
+	if (!wa.glx_context) {
+		printf("Unable to create context\n");
+		return 1;
+	}
+	if (!glXMakeCurrent(wa.dpy, wa.w, wa.glx_context)) {
+		printf("glXMakeCurrent failed\n");
+		return 1;
+	}
+
+	wa.vHandle = compileShader(vShader, GL_VERTEX_SHADER);
+	wa.fHandle = compileShader(fShader, GL_FRAGMENT_SHADER);
+	wa.pHandle = createProgram(wa.vHandle, wa.fHandle);
+	if (!wa.vHandle || !wa.fHandle || !wa.pHandle) {
+		printf("Compile failed\n");
+		return 1;
+	}
+	glUseProgram(wa.pHandle);
+
+#ifdef SHOW_TEXT
+	wa.font = XLoadQueryFont(wa.dpy, FONT_USED);
+	if (!wa.font) {
+		printf("Font not found\n");
+		return 1;
+	}
+#endif
+
+	initGL(wa.dpy, wa.w, wa.pHandle, &wa.xwa
+#ifdef SHOW_TEXT
+	, wa.font
+#endif
+	);
+
+	XMapRaised(wa.dpy, wa.w);
+	return 0;
+}
+
+void tear_down_window() {
+	glDeleteShader(wa.vHandle);
+	glDeleteShader(wa.fHandle);
+	glDeleteProgram(wa.pHandle);
+
+#ifdef SHOW_TEXT
+	if (wa.font) XFreeFont(wa.dpy, wa.font);
+#endif
+	if (wa.cmap) XFreeColormap(wa.dpy, wa.cmap);
+	if (wa.glx_context) {
+		glXMakeCurrent(wa.dpy, None, NULL);
+		glXDestroyContext(wa.dpy, wa.glx_context);
+	}
+	if (wa.w) XDestroyWindow(wa.dpy, wa.w);
+	if (wa.dpy) XCloseDisplay(wa.dpy);
+}
+
+//-------------------------------MAIN-----------------------------
 int main(int argc, char ** argv) {
 	if (!(--argc)) {
 		printf("You must specify at least one instrument to subscribe to (example format: EUR_USD)\n");
@@ -206,82 +333,41 @@ int main(int argc, char ** argv) {
 	}
 	++argv;
 
-	XEvent event;
-	int done = 0;
-
-
-	Display * dpy = XOpenDisplay(NULL);
-	if (!dpy) return 1;
-
-	int attrList[] = {GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 4, GLX_GREEN_SIZE, 4, GLX_BLUE_SIZE, 4, None};
-	XVisualInfo * vinfo = glXChooseVisual(dpy, DefaultScreen(dpy), attrList);
-	if (!vinfo) {
-		printf("Unable to acquire visual\n");
+	if (init_window()) {
+		tear_down_window();
 		return 1;
 	}
-
-	XSetWindowAttributes swa;
-	swa.event_mask = ButtonPressMask | KeyPressMask;
-	swa.colormap = XCreateColormap(dpy, RootWindow(dpy, vinfo->screen), vinfo->visual, AllocNone);
-
-	Window w = XCreateWindow(dpy, DefaultRootWindow(dpy), 0, 0, DisplayWidth(dpy, vinfo->screen)/2, DisplayHeight(dpy, vinfo->screen)/2, 0, 0, CopyFromParent, vinfo->visual, CWColormap | CWEventMask, &swa);
-
-	GLXContext glx = glXCreateContext(dpy, vinfo, NULL, True);
-	if (glx == NULL) {
-		printf("Unable to create context\n");
-		return 1;
-	}
-	if (!glXMakeCurrent(dpy, w, glx)) {
-		printf("glXMakeCurrent failed\n");
-		return 1;
-	}
-
-	GLuint vHandle = compileShader(vShader, GL_VERTEX_SHADER);
-	GLuint fHandle = compileShader(fShader, GL_FRAGMENT_SHADER);
-	GLuint pHandle = createProgram(vHandle, fHandle);
-	if (!vHandle || !fHandle || !pHandle) {
-		glDeleteShader(vHandle);
-		glDeleteShader(fHandle);
-		glDeleteProgram(pHandle);
-		printf("Compile failed\n");
-		return;
-	}
-	glUseProgram(pHandle);
-
-	XFontStruct * font = XLoadQueryFont(dpy, "-misc-fixed-bold-r-normal--15-140-75-75-c-90-iso10646-1");
-	if (!font) {
-		printf("Font not found\n");
-		return 1;
-	}
-
-	initGL(dpy, w, pHandle, font);
-
-	XMapRaised(dpy, w);
 
 	pthread_t poll_thread = setup_state_and_poll_thread(&state_buffer, argc, argv);
 	state.num_instruments = 0;
 
+	XEvent event;
+	int done = 0;
+
 	while (!done && poll_thread) {
-		if (XPending(dpy)) {
-			XNextEvent(dpy, &event);
+		if (XPending(wa.dpy)) {
+			XNextEvent(wa.dpy, &event);
 			switch(event.type) {
-			case ButtonPress: done = 1; break;
+			case ConfigureNotify: {
+				XGetWindowAttributes(wa.dpy, wa.w, &wa.xwa);
+				break;
+			}
+			case ButtonPress:
+			case KeyPress:
+			case MotionNotify:
+			{
+				done = 1;
+				break;
+			}
 			}
 		}
-		draw(dpy, w);
+		if (!done) {
+			draw(wa.dpy, wa.w, wa.xwa.width, wa.xwa.height);
+		}
 	}
 
 	close_poll_thread(poll_thread);
-	glDeleteShader(vHandle);
-	glDeleteShader(fHandle);
-	glDeleteProgram(pHandle);
+	tear_down_window();
 
-	XFreeFont(dpy, font);
-	XFreeColormap(dpy, swa.colormap);
-	glXMakeCurrent(dpy, None, NULL);
-	glXDestroyContext(dpy, glx);
-	XDestroyWindow(dpy, w);
-	XFree(vinfo);
-	XCloseDisplay(dpy);
 	return 0;
 }

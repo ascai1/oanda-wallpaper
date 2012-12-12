@@ -3,7 +3,7 @@
 
 #include <pthread.h>
 
-#define MAX_DRAW_STATE 100
+#define MAX_DRAW_STATE 60
 
 typedef struct {
 	char instrument[16];

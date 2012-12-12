@@ -7,6 +7,8 @@
 #include <string.h>
 #include "s_string.h"
 #include "poll_t.h"
+
+#define REFRESH_RATE 500000000
 #define PORT 80
 #define POLL_CALL "http://api-sandbox.oanda.com/v1/instruments/poll.json"
 
@@ -201,8 +203,8 @@ static void reset_clock(int clockid) {
 	struct itimerspec ts;
 	ts.it_interval.tv_sec = 0;
 	ts.it_interval.tv_nsec = 0;
-	ts.it_value.tv_sec = 1;
-	ts.it_value.tv_nsec = 0;
+	ts.it_value.tv_sec = 0;
+	ts.it_value.tv_nsec = REFRESH_RATE;
 	timerfd_settime(clockid, 0, &ts, NULL);
 }
 
