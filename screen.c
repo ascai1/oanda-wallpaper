@@ -1,3 +1,4 @@
+#include <curl/curl.h>
 #include <X11/Xlib.h>
 #include <GL/glx.h>
 #include <GL/gl.h>
@@ -36,7 +37,7 @@ struct {
 	Display * dpy;
 	Window w;
 	GLXContext glx_context;
-	XWindowAttributes xwa;
+	int width, height;
 	GLuint vHandle, fHandle, pHandle;
 	Colormap cmap;
 #ifdef SHOW_TEXT
@@ -112,23 +113,25 @@ typedef struct {
 	int x, y;
 } Dimension;
 
-Dimension get_width_for_num_instruments(int num_instruments, int width, int height) {
+Dimension get_grid_for_num_instruments(int num_instruments, int width, int height) {
 	Dimension d = {0};
 	if (!num_instruments) return d;
-	d.x = round(sqrt(num_instruments));
+
+	float ratio = (float)width / height;
+	d.x = round(sqrt(num_instruments * ratio));
 	d.y = (num_instruments - 1) / d.x + 1;
 	int i;
-	for (i = d.x; i > pow(num_instruments, (float)1/3); --i) {
+	for (i = (d.x > d.y ? d.y : d.x); i > sqrt(num_instruments * ratio / 2); --i) {
 		if (num_instruments % i == 0) {
-			d.x = i;
-			d.y = num_instruments / i;
-			break;
+			if (width > height) {
+				d.x = num_instruments / i;
+				d.y = i;
+			} else {
+				d.x = i;
+				d.y = num_instruments / i;
+			}
+			return d;
 		}
-	}
-	if ((d.x > d.y && width < height) || (d.x < d.y && width > height)) {
-		i = d.x;
-		d.x = d.y;
-		d.y = i;
 	}
 	return d;
 }
@@ -141,7 +144,7 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	Dimension d = get_width_for_num_instruments(state.num_instruments, s_width, s_height);
+	Dimension d = get_grid_for_num_instruments(state.num_instruments, s_width, s_height);
 	int i;
 	for (i = 0; i < state.num_instruments; ++i) {
 		float bottom = s_width / d.x * (i % d.x);
@@ -154,7 +157,6 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 
 		GLfloat brightness = pow(1 - pow((float)is->draw_state / MAX_DRAW_STATE * 2 - 1, 2), 0.5);
 		if (is->draw_state) --is->draw_state;
-		//if (strcmp(is->instrument, "EUR_USD") == 0) printf("%d\n", is->draw_state);
 
 		GLfloat up[] = {
 			-T_BOUND, -T_BOUND, 0.0, T_BOTTOM_BRIGHTNESS, 0.0, brightness,
@@ -205,7 +207,7 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 }
 
 //--------------------------INITIALIZATION------------------
-void initGL(Display * dpy, Window win, GLuint pHandle, XWindowAttributes * xwa
+void initGL(Display * dpy, Window win, GLuint pHandle
 #ifdef SHOW_TEXT
 , XFontStruct * font
 #endif
@@ -225,7 +227,6 @@ void initGL(Display * dpy, Window win, GLuint pHandle, XWindowAttributes * xwa
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	XGetWindowAttributes(dpy, win, xwa);
 	glGenBuffers(1, &gla.array_buffer);
 }
 
@@ -279,10 +280,8 @@ int init_window() {
 		return 1;
 	}
 
-#ifdef FULLSCREEN
-	XGrabKeyboard(wa.dpy, wa.w, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-	XGrabPointer(wa.dpy, wa.w, True, PointerMotionMask, GrabModeAsync, GrabModeAsync, wa.w, None, CurrentTime);
-#endif
+	wa.width = DisplayWidth(wa.dpy, vinfo->screen);
+	wa.height = DisplayHeight(wa.dpy, vinfo->screen);
 
 	wa.glx_context = glXCreateContext(wa.dpy, vinfo, NULL, True);
 	XFree(vinfo);
@@ -312,13 +311,19 @@ int init_window() {
 	}
 #endif
 
-	initGL(wa.dpy, wa.w, wa.pHandle, &wa.xwa
+	initGL(wa.dpy, wa.w, wa.pHandle
 #ifdef SHOW_TEXT
 	, wa.font
 #endif
 	);
 
 	XMapRaised(wa.dpy, wa.w);
+
+#ifdef FULLSCREEN
+	XGrabKeyboard(wa.dpy, wa.w, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+	XGrabPointer(wa.dpy, wa.w, True, PointerMotionMask, GrabModeAsync, GrabModeAsync, wa.w, None, CurrentTime);
+#endif
+
 	return 0;
 }
 
@@ -347,8 +352,11 @@ int main(int argc, char ** argv) {
 	}
 	++argv;
 
+	curl_global_init(CURL_GLOBAL_ALL);
+
 	if (init_window()) {
 		tear_down_window();
+		curl_global_cleanup();
 		return 1;
 	}
 
@@ -363,7 +371,10 @@ int main(int argc, char ** argv) {
 			XNextEvent(wa.dpy, &event);
 			switch(event.type) {
 			case ConfigureNotify: {
-				XGetWindowAttributes(wa.dpy, wa.w, &wa.xwa);
+				XWindowAttributes xwa;
+				XGetWindowAttributes(wa.dpy, wa.w, &xwa);
+				wa.width = xwa.width;
+				wa.height = xwa.height;
 				break;
 			}
 			case ButtonPress:
@@ -376,12 +387,13 @@ int main(int argc, char ** argv) {
 			}
 		}
 		if (!done) {
-			draw(wa.dpy, wa.w, wa.xwa.width, wa.xwa.height);
+			draw(wa.dpy, wa.w, wa.width, wa.height);
 		}
 	}
 
 	close_poll_thread(poll_thread);
 	tear_down_window();
+	curl_global_cleanup();
 
 	return 0;
 }

@@ -229,8 +229,6 @@ pthread_t setup_state_and_poll_thread(State * state, int argc, char ** argv) {
 
 	struct json_object * request_config = create_json_request(argc, argv);
 
-	curl_global_init(CURL_GLOBAL_ALL);
-
 	message = perform_curl(NULL, POLL_CALL, PORT, 0, request_config);
 	json_object_put(request_config);
 	if (!message) {
@@ -264,5 +262,4 @@ void close_poll_thread(pthread_t thread) {
 	pthread_mutex_destroy(&mState);
 	if (CLOCKID >= 0) close(CLOCKID);
 	delete_string(message);
-	curl_global_cleanup();
 }
