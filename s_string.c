@@ -1,4 +1,3 @@
-#include <json/json.h>
 #include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +51,7 @@ struct String * perform_curl(struct String * m, char * url, unsigned long port, 
 
 	CURL * curl = curl_easy_init();
 	if (!curl) {
+		free(message);
 		return NULL;
 	}
 

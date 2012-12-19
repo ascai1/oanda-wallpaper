@@ -1,6 +1,8 @@
 #ifndef S_STRING
 #define S_STRING
 
+#include <json/json.h>
+
 struct String {
 	char * data;
 	size_t length;
