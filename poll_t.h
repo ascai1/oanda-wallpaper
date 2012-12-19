@@ -29,7 +29,7 @@ void delete_state(State * state);
 void lock_state(State * state);
 void unlock_state(State * state);
 int is_ready(State * state);
-void copy_state(State * target, State * source);
+void copy_state(State * target, State * source, int clear_ready);
 pthread_t setup_state_and_poll_thread(State * state, int argc, char ** argv);
 void destroy_state_and_poll_thread(State * state, pthread_t thread);
 

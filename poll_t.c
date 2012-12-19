@@ -56,6 +56,12 @@ void unlock_state(State * state) {
 	pthread_mutex_unlock(&state->mState);
 }
 
+void mark_ready(State * state) {
+	pthread_mutex_lock(&state->mState);
+	state->ready = 1;
+	pthread_mutex_unlock(&state->mState);
+}
+
 int is_ready(State * state) {
 	pthread_mutex_lock(&state->mState);
 	int r = state->ready;
@@ -63,14 +69,15 @@ int is_ready(State * state) {
 	return r;
 }
 
-void copy_state(State * target, State * source) {
+void copy_state(State * target, State * source, int clear_ready) {
 	if (source == NULL || target == NULL || source == target) return;
 
-	pthread_mutex_lock(&source->mState);
 	pthread_mutex_lock(&target->mState);
+	pthread_mutex_lock(&source->mState);
 
 	target->ready = source->ready;
-	if (source->ready <= 0) {
+	if (clear_ready) source->ready = 0;
+	if (target->ready <= 0) {
 		pthread_mutex_unlock(&source->mState);
 		pthread_mutex_unlock(&target->mState);
 		return;
@@ -236,11 +243,13 @@ void send_poll_request(State * state, unsigned long id) {
 	state->message = perform_curl(state->message, POLL_CALL, PORT, id, NULL);
 	if (!state->message->data) {
 		printf("Poll request got null response\n");
+		pthread_mutex_unlock(&state->mState);
 		return;
 	}
 	struct json_object * poll_data = json_tokener_parse(state->message->data);
 	if (!poll_data) {
 		printf("The response string could not be parsed: %s\n", state->message->data);
+		pthread_mutex_unlock(&state->mState);
 		return;
 	}
 	pthread_mutex_unlock(&state->mState);
@@ -249,7 +258,6 @@ void send_poll_request(State * state, unsigned long id) {
 	struct json_object * price_array;
 	if (json_object_object_get_ex(poll_data, "prices", &price_array) && json_object_get_array(price_array)) {
 		clear_state_changed(state);
-		pthread_mutex_lock(&state->mState);
 		for (i = 0; i < json_object_array_length(price_array); ++i) {
 			struct json_object * instrument = json_object_array_get_idx(price_array, i);
 			struct json_object * name_obj;
@@ -257,8 +265,7 @@ void send_poll_request(State * state, unsigned long id) {
 				setup_instrument(state, json_object_get_string(name_obj), instrument);
 			}
 		}
-		state->ready = 1;
-		pthread_mutex_unlock(&state->mState);
+		mark_ready(state);
 	}
 	json_object_put(poll_data);
 }
