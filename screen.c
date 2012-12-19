@@ -56,16 +56,7 @@ struct {
 	#endif
 } gla;
 
-State state;
-State state_buffer;
-
-void refresh_state() {
-	State * new_state = getState(1);
-	if (new_state) {
-		copy_state(&state, new_state);
-		delete_state(new_state);
-	}
-}
+State * state, * state_buffer;
 
 GLuint compileShader(GLchar * shader, GLenum type) {
 	GLuint ok;
@@ -138,22 +129,24 @@ Dimension get_grid_for_num_instruments(int num_instruments, int width, int heigh
 
 //----------------------------DRAW---------------------------
 void draw(Display * dpy, Window win, int s_width, int s_height) {
-	refresh_state();
+	copy_state(state, state_buffer);
+
+	lock_state(state);
 
 	glViewport(0, 0, s_width, s_height);
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	Dimension d = get_grid_for_num_instruments(state.num_instruments, s_width, s_height);
+	Dimension d = get_grid_for_num_instruments(state->num_instruments, s_width, s_height);
 	int i;
-	for (i = 0; i < state.num_instruments; ++i) {
+	for (i = 0; i < state->num_instruments; ++i) {
 		float bottom = s_width / d.x * (i % d.x);
 		float left = s_height / d.y * (d.y - 1 - i / d.x);
 		float width = s_width / d.x;
 		float height = s_height / d.y;
 		glViewport(bottom, left, width, height);
 
-		Instrument_State * is = &state.instruments[i];
+		Instrument_State * is = &state->instruments[i];
 
 		GLfloat brightness = pow(1 - pow((float)is->draw_state / MAX_DRAW_STATE * 2 - 1, 2), 0.5);
 		if (is->draw_state) --is->draw_state;
@@ -202,6 +195,8 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 		glCallLists(p_length, GL_UNSIGNED_BYTE, (unsigned char *)price);
 #endif
 	}
+
+	unlock_state(state);
 
 	glXSwapBuffers(dpy, win);
 }
@@ -360,8 +355,9 @@ int main(int argc, char ** argv) {
 		return 1;
 	}
 
-	pthread_t poll_thread = setup_state_and_poll_thread(&state_buffer, argc, argv);
-	state.num_instruments = 0;
+	state = new_state();
+	state_buffer = new_state();
+	pthread_t poll_thread = setup_state_and_poll_thread(state_buffer, argc, argv);
 
 	XEvent event;
 	int done = 0;
@@ -391,7 +387,7 @@ int main(int argc, char ** argv) {
 		}
 	}
 
-	close_poll_thread(poll_thread);
+	destroy_state_and_poll_thread(state_buffer, poll_thread);
 	tear_down_window();
 	curl_global_cleanup();
 
