@@ -129,7 +129,7 @@ Dimension get_grid_for_num_instruments(int num_instruments, int width, int heigh
 
 //----------------------------DRAW---------------------------
 void draw(Display * dpy, Window win, int s_width, int s_height) {
-	copy_state(state, state_buffer);
+	copy_state(state, state_buffer, 1);
 
 	lock_state(state);
 
