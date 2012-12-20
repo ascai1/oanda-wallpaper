@@ -9,7 +9,7 @@ all:
 	$(COMPILER) -c $(CLASSES_TO_COMPILE) $(LIBS:%=-l%)
 
 glScreen: all
-	$(COMPILER) $(GL_CLASSES_TO_COMPILE) $(CLASSES_TO_COMPILE:%.c=%.o) $(LIBS:%=-l%) $(GL_LIBS:%=-l%) -o $@$(EXT)
+	$(COMPILER) $(GL_CLASSES_TO_COMPILE) $(CLASSES_TO_COMPILE:%.c=%.o) $(sort $(LIBS:%=-l%) $(GL_LIBS:%=-l%)) -o $@$(EXT)
 
 test: all
 	$(COMPILER) test.c $(CLASSES_TO_COMPILE:%.c=%.o) $(LIBS:%=-l%) -o $@$(EXT)

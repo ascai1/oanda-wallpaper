@@ -140,11 +140,11 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 	Dimension d = get_grid_for_num_instruments(state->num_instruments, s_width, s_height);
 	int i;
 	for (i = 0; i < state->num_instruments; ++i) {
-		float bottom = s_width / d.x * (i % d.x);
-		float left = s_height / d.y * (d.y - 1 - i / d.x);
+		float left = s_width / d.x * (i % d.x);
+		float bottom = s_height / d.y * (d.y - 1 - i / d.x);
 		float width = s_width / d.x;
 		float height = s_height / d.y;
-		glViewport(bottom, left, width, height);
+		glViewport(left, bottom, width, height);
 
 		Instrument_State * is = &state->instruments[i];
 
@@ -190,8 +190,8 @@ void draw(Display * dpy, Window win, int s_width, int s_height) {
 		sprintf(price, "%f", is->price);
 		float p_length = strlen(price);
 		GLfloat p_left = -p_length * gla.font_width / width;
-		GLfloat p_top = -0.9;
-		glRasterPos2f(p_left, p_top);
+		GLfloat p_bottom = -0.9;
+		glRasterPos2f(p_left, p_bottom);
 		glCallLists(p_length, GL_UNSIGNED_BYTE, (unsigned char *)price);
 #endif
 	}
@@ -213,7 +213,7 @@ void initGL(Display * dpy, Window win, GLuint pHandle
 #ifdef SHOW_TEXT
 	int first = font->min_char_or_byte2;
 	int last = font->max_char_or_byte2;
-	gla.font_base = glGenLists(font->max_char_or_byte2 + 1);
+	gla.font_base = glGenLists(last + 1);
 	glXUseXFont(font->fid, first, last - first + 1, gla.font_base + first);
 
 	gla.font_width = font->max_bounds.width;
